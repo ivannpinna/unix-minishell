@@ -8,6 +8,8 @@
 #include <sys/wait.h>
 #include "parser.h"
 
+void cd_execute(tline *line);
+
 int main() {
 
     char buffer[1024];
@@ -41,7 +43,7 @@ int main() {
         } else if (strcmp(line->commands[0].filename, "jobs") == 0) {
             // Llamar a la funcion jobs
         } else if (strcmp(line->commands[0].filename, "cd") == 0) {
-            // Llamar a la funcion cd
+            cd_execute(line);
         } else if (strcmp(line->commands[0].filename, "bg") == 0) {
             // Aquí iría la implementación de bg
         } else {
@@ -144,3 +146,29 @@ int main() {
 
     return 0;
 }
+
+
+void cd_execute(tline *line) {
+
+    char *dir;
+    char buffer[1024];
+
+    // Si no indica el directorio mandamos a HOME
+    if (line->commands[0].argc == 1) {
+        dir = getenv("HOME");
+    } else {
+        dir = line -> commands[0].argv[1]; //Guardamos en dir, el directorio al que queremos cambiar
+    }
+
+    // Cambio de directorio y visualizacion de la nueva ruta
+    if (chdir(dir) != 0) {
+        perror("Imposible cambiar de directorio");
+    } else {
+        if (getcwd(buffer, sizeof(buffer)) != NULL) {
+            printf("%s\n", buffer);
+        } else {
+            perror("cd: error obteniendo ruta actual");
+        }
+    }
+}
+
