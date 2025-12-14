@@ -16,6 +16,7 @@ int main() {
     tline *line;
     int i, j;
     pid_t pid;
+	int status;
 
     // Contrrol de señales
     signal(SIGINT, SIG_IGN);
@@ -62,8 +63,10 @@ int main() {
                     //Gestion de señales
                     if (line -> background) {
                         signal(SIGINT, SIG_IGN);
+                        signal(SIGTSTP, SIG_IGN);
                     } else {
                         signal(SIGINT, SIG_DFL);
+                        signal(SIGTSTP, SIG_DFL);
                     }
 
                     // Redireccion de entrada
@@ -137,7 +140,26 @@ int main() {
             }
             else {
                 for (j = 0; j < line->ncommands; j++) {
-                    wait(NULL);
+                    pid_t child_pid = waitpid(-1, &status, WUNTRACED);
+
+                    if (child_pid > 0) {
+
+                        // Ctrl + Z
+                        if (WIFSTOPPED(status)) {
+                            printf("\n[%d] Stopped\t%s\n", child_pid, line->commands[j].filename);
+
+                            // AQUI DEBERÁS AÑADIRLO A TU LISTA DE JOBS (Más adelante)
+                            // add_job(child_pid, ...);
+                        }
+
+                        // Ctrl + C
+                        else if (WIFSIGNALED(status)) {
+                        }
+
+                        // Terminó normal
+                        else if (WIFEXITED(status)) {
+                        }
+                    }
                 }
             }
         }
