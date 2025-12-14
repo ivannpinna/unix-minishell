@@ -7,7 +7,9 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "parser.h"
+#include <sys/stat.h> //Para el umask
 
+void umask_execute(tline *line);
 void cd_execute(tline *line);
 
 int main() {
@@ -40,7 +42,7 @@ int main() {
         if (strcmp(line->commands[0].argv[0], "exit") == 0) {
             exit(0);
         } else if (strcmp(line->commands[0].argv[0], "umask") == 0) {
-            // Llamar a la funcion umask
+            umask_execute(line);
         } else if (strcmp(line->commands[0].argv[0], "jobs") == 0) {
             // Llamar a la funcion jobs
         } else if (strcmp(line->commands[0].argv[0], "cd") == 0) {
@@ -56,12 +58,10 @@ int main() {
                     pipe(p);
                 }
                 pid = fork();
-                if (pid == -1) {
-                    // Error al hacer el fork
-                }
-                else if (pid == 0) {
-                    //Gestion de señales
-                    if (line -> background) {
+
+                if (pid == 0) {
+                    // Gestión de señales en el hijo
+                    if (line->background) {
                         signal(SIGINT, SIG_IGN);
                         signal(SIGTSTP, SIG_IGN);
                     } else {
@@ -69,68 +69,62 @@ int main() {
                         signal(SIGTSTP, SIG_DFL);
                     }
 
-                    // Redireccion de entrada
-                    if (i == 0) {
+                    // Redirección de entrada
+                    if (i == 0) { // Primer mandato
                         if (line->redirect_input != NULL) {
                             int file_in = open(line->redirect_input, O_RDONLY);
                             if (file_in == -1) {
-                                fprintf(stderr, "Could not open redirection input\n");
+                                perror("Error apertura entrada");
                                 exit(1);
                             }
                             dup2(file_in, STDIN_FILENO);
                             close(file_in);
                         }
-                    }
-                    else {
-                        dup2(fd_in, STDOUT_FILENO);
+                    } else { // Mandatos intermedios o último
+                        // El hijo lee del extremo de lectura del pipe anterior
+                        dup2(fd_in, STDIN_FILENO);
                         close(fd_in);
                     }
 
-                    // Redireccion de salida
-                    if (i == line->ncommands - 1) {
+                    // -Redirección de salida
+                    if (i == line->ncommands - 1) { // Último mandato
                         if (line->redirect_output != NULL) {
                             int file_out = open(line->redirect_output, O_CREAT | O_TRUNC | O_WRONLY, 0666);
                             if (file_out == -1) {
-                                fprintf(stderr, "Could not open redirection output\n");
+                                perror("Error apertura salida");
                                 exit(1);
                             }
                             dup2(file_out, STDOUT_FILENO);
                             close(file_out);
                         }
-                        // Redireccion de salida de error
+                        // Redirección de error
                         if (line->redirect_error != NULL) {
                             int file_err = open(line->redirect_error, O_CREAT | O_TRUNC | O_WRONLY, 0666);
                             if (file_err == -1) {
-                                fprintf(stderr, "%s: Error. Descripción del error\n", line->redirect_error);
+                                perror("Error apertura error");
                                 exit(1);
                             }
                             dup2(file_err, STDERR_FILENO);
                             close(file_err);
                         }
-                    }
-                    else {
-                        dup2(p[1], STDIN_FILENO);
+                    } else { // Mandatos que NO son el último
+                        // El hijo escribe en el extremo de escritura del pipe actual
+                        close(p[0]); // Cerramos lectura que no usaremos
+                        dup2(p[1], STDOUT_FILENO);
                         close(p[1]);
-                        close(p[0]);
                     }
 
-                    // Ejecucion
                     execvp(line->commands[i].filename, line->commands[i].argv);
-
-                    // Error en el exec
                     fprintf(stderr, "%s: No se encuentra el mandato\n", line->commands[i].filename);
                     exit(1);
                 }
-                else { // Proceso padre
-
+                else { // PADRE
                     if (fd_in != -1) {
-                        close(fd_in); // Cierra el pipe anterior
+                        close(fd_in);
                     }
-
-                    // Prepara para el siguiente mandato del pipe si lo hay
                     if (i < line->ncommands - 1) {
-                        fd_in = p[0];
-                        close(p[1]);
+                        fd_in = p[0]; // Guardamos lectura para el siguiente hijo
+                        close(p[1]);  // Cerramos la lectura
                     }
                 }
             }
@@ -154,6 +148,7 @@ int main() {
 
                         // Ctrl + C
                         else if (WIFSIGNALED(status)) {
+                            printf("\n");
                         }
 
                         // Terminó normal
@@ -167,6 +162,28 @@ int main() {
     }
 
     return 0;
+}
+
+void umask_execute(tline *line) {
+    //Control de pipes (no puede aceptarlas)
+    if (line->ncommands > 1) {
+        fprintf(stderr, "umask: no se puede ejecutar con pipes\n");
+    }
+    // Sin argumento: Mostrar máscara
+    else if (line->commands[0].argc == 1) {
+        mode_t old_mask = umask(0); // Cambiamos a 0 y recogemos la anterior (la que queremos mostrar)
+        umask(old_mask); // La restauramos inmediatamente
+        printf("%04o\n", old_mask); // %04o imprime en formato Octal (ej: 0022)
+    }
+    // Con argumento: Cambiar máscara
+    else if (line->commands[0].argc == 2) {
+        mode_t new_mask = (mode_t)strtoul(line->commands[0].argv[1], NULL, 8); // Convertimos el string a long usando octal
+        umask(new_mask);
+    }
+    else {
+        fprintf(stderr, "uso: umask [numero_octal]\n");
+    }
+
 }
 
 
