@@ -9,8 +9,22 @@
 #include "parser.h"
 #include <sys/stat.h> //Para el umask
 
+#define MAX_JOBS 20
+
+typedef struct {
+    pid_t pid;
+    char *command;
+    char status; // 'R' = Running, 'S' = Stopped
+} Job;
+Job jobs_list[MAX_JOBS];
+int n_jobs = 0;
+
 void umask_execute(tline *line);
 void cd_execute(tline *line);
+void jobs_execute();
+void bg_execute(tline *line);
+void add_job(pid_t pid, char *command, char status);
+void delete_job(int index);
 
 int main() {
 
@@ -18,6 +32,8 @@ int main() {
     tline *line;
     int i, j;
     pid_t pid;
+    pid_t pid_bg;
+    int status_bg;
 	int status;
 
     // Contrrol de señales
@@ -31,6 +47,19 @@ int main() {
     printf("msh> ");
     while (fgets(buffer, 1024, stdin)) {
         line = tokenize(buffer);
+        buffer[strcspn(buffer, "\n")] = 0;; //Para que se vean limpios los comandos del jobs
+        // Zombies check
+        for (int k = 0; k < n_jobs; k++) {
+            // WNOHANG: No se bloquea si el proceso sigue vivo
+            pid_bg = waitpid(jobs_list[k].pid, &status_bg, WNOHANG);
+
+            if (pid_bg > 0) {
+                // El proceso terminó. Avisamos y lo borramos.
+                printf("[%d]+ Done\t%s\n", k + 1, jobs_list[k].command);
+                delete_job(k);
+                k--; // Retrocedemos índice porque la lista se ha desplazo
+            }
+        }
 
         // Si la linea esta vacia o hubo un error
         if (line == NULL || line->ncommands == 0) {
@@ -44,11 +73,11 @@ int main() {
         } else if (strcmp(line->commands[0].argv[0], "umask") == 0) {
             umask_execute(line);
         } else if (strcmp(line->commands[0].argv[0], "jobs") == 0) {
-            // Llamar a la funcion jobs
+            jobs_execute();
         } else if (strcmp(line->commands[0].argv[0], "cd") == 0) {
             cd_execute(line);
         } else if (strcmp(line->commands[0].argv[0], "bg") == 0) {
-            // Aquí iría la implementación de bg
+            bg_execute(line);
         } else {
             fd_in = -1;
 
@@ -130,7 +159,7 @@ int main() {
             }
             // Espera de procesos
             if (line->background) {
-                printf("[%d]\n", pid);
+                add_job(pid, buffer, 'R');
             }
             else {
                 for (j = 0; j < line->ncommands; j++) {
@@ -138,21 +167,16 @@ int main() {
 
                     if (child_pid > 0) {
 
-                        // Ctrl + Z
+                        // Ctrl + Z (Proceso detenido)
                         if (WIFSTOPPED(status)) {
-                            printf("\n[%d] Stopped\t%s\n", child_pid, line->commands[j].filename);
+                            // Añadimos a la lista 'S' (Stopped)
+                            add_job(child_pid, buffer , 'S');
 
-                            // AQUI DEBERÁS AÑADIRLO A TU LISTA DE JOBS (Más adelante)
-                            // add_job(child_pid, ...);
                         }
 
                         // Ctrl + C
                         else if (WIFSIGNALED(status)) {
                             printf("\n");
-                        }
-
-                        // Terminó normal
-                        else if (WIFEXITED(status)) {
                         }
                     }
                 }
@@ -210,4 +234,78 @@ void cd_execute(tline *line) {
         }
     }
 }
+
+// Añadir un job a la lista
+void add_job(pid_t pid, char *command, char status) {
+    if (n_jobs < MAX_JOBS) {
+        jobs_list[n_jobs].pid = pid;
+        jobs_list[n_jobs].command = strdup(command); // Copiamos el string
+        jobs_list[n_jobs].status = status;
+        n_jobs++;
+        printf("\n");
+        printf("[%d]+ %s\t%s\n", n_jobs, (status == 'R' ? "Running" : "Stopped"), command);
+    } else {
+        fprintf(stderr, "Error: Lista de trabajos llena\n");
+    }
+}
+
+// Eliminar un job de la lista
+void delete_job(int index) {
+    if (index < 0 || index >= n_jobs) return;
+
+    free(jobs_list[index].command); // Liberamos memoria del string
+
+    for (int i = index; i < n_jobs - 1; i++) {
+        jobs_list[i] = jobs_list[i + 1];
+    }
+    n_jobs--;
+}
+
+void jobs_execute() {
+    for (int i = 0; i < n_jobs; i++) {
+        printf("[%d]+ %s\t%s\n", i + 1,
+               (jobs_list[i].status == 'R' ? "Running" : "Stopped"),
+               jobs_list[i].command);
+    }
+}
+
+void bg_execute(tline *line) {
+    int job_num = -1;
+    int index = -1;
+
+    // bg sin argumentos: último trabajo parado
+    if (line->commands[0].argc == 1) {
+        for (int i = n_jobs - 1; i >= 0; i--) {
+            if (jobs_list[i].status == 'S') {
+                index = i;
+                break;
+            }
+        }
+        if (index == -1) {
+            fprintf(stderr, "bg: no hay trabajos detenidos actualmente\n");
+            return;
+        }
+    }
+    // bg <numero>: trabajo específico
+    else {
+        job_num = atoi(line->commands[0].argv[1]);
+        if (job_num < 1 || job_num > n_jobs) {
+            fprintf(stderr, "bg: trabajo no encontrado\n");
+            return;
+        }
+        index = job_num - 1;
+    }
+
+    if (jobs_list[index].status == 'S') {
+        kill(jobs_list[index].pid, SIGCONT); // Señal CONTINUAR
+        jobs_list[index].status = 'R';       // Actualizamos estado
+        printf("[%d]+ %s &\n", index + 1, jobs_list[index].command);
+    } else {
+        fprintf(stderr, "bg: el trabajo ya está en ejecución\n");
+    }
+}
+
+
+
+
 
