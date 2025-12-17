@@ -54,7 +54,7 @@ int main() {
 
         line = tokenize(buffer);
 
-        // --- ZOMBIES CHECK ---
+        // Zombies check
         for (int k = 0; k < n_jobs; k++) {
             pid_bg = waitpid(jobs_list[k].pids[jobs_list[k].npids - 1], &status_bg, WNOHANG);
 
@@ -94,7 +94,7 @@ int main() {
                 }
                 pid = fork();
 
-                if (pid == 0) { // HIJO
+                if (pid == 0) { // Hijo
                     if (line->background) {
                         signal(SIGINT, SIG_IGN);
                         signal(SIGTSTP, SIG_IGN);
@@ -147,7 +147,7 @@ int main() {
                     fprintf(stderr, "%s: No se encuentra el mandato\n", line->commands[i].filename);
                     exit(1);
                 }
-                else { // PADRE
+                else { // Padre
                     pids_temp[i] = pid; // Guardamos el PID en el array temporal
 
                     if (fd_in != -1) {
